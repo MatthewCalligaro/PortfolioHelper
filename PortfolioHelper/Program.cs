@@ -146,7 +146,7 @@ namespace PortfolioHelper
         static bool ParseInput(string input)
         {
             // Do nothing on a blank input
-            if (input.Length == 0)
+            if (string.IsNullOrWhiteSpace(input))
             {
                 return false;
             }
@@ -200,7 +200,7 @@ namespace PortfolioHelper
             }
             catch (IOException)
             {
-                Console.WriteLine("Could not read from input file.  Please try again:");
+                Console.WriteLine("Could not read from input file.  Make sure that the input file exists and is not in use by another application.  Please try again:");
                 return false;
             }
 
@@ -262,6 +262,14 @@ namespace PortfolioHelper
         /// <param name="outputFile">the path of the file to which the output is saved</param>
         static void UpdatePortfolio(string[] inputFileLines, string outputFile)
         {
+            // Remove empty lines at the end of inputFileLines
+            int newInputLength = inputFileLines.Length;
+            while (newInputLength > 0 && string.IsNullOrWhiteSpace(inputFileLines[newInputLength - 1].Replace(",", "")))
+            {
+                newInputLength--;
+            }
+            Array.Resize(ref inputFileLines, newInputLength);
+
             string[] headers = ParseCSVLine(inputFileLines[0]);
             int[] columns = new int[HeaderTexts.Length];
             int nextCol = headers.Length;
@@ -302,7 +310,7 @@ namespace PortfolioHelper
             for (int i = 0; i < inputFileLines.Length; i++)
             {
                 string[] parsedLine = ParseCSVLine(inputFileLines[i]);
-                if (parsedLine.Length == nextCol)
+                if (parsedLine.Length >= nextCol)
                 {
                     parsedLines[i] = parsedLine;
                 }
@@ -317,58 +325,66 @@ namespace PortfolioHelper
             double totalPurchaseCost = 0;
             double totalCurrentValue = 0;
             double totalDividend = 0;
+            int totalLineExists = 0;
 
             // Perform calculations for each stock
             for (int i = 1; i < parsedLines.Length; i++)
             {
-                string symbol = parsedLines[i][columns[Headers.Symbol.GetHashCode()]];
-                int shares;
-                double purchasePrice;
-                DateTime purchaseDate;
-
                 // Clear the error message
                 parsedLines[i][columns[Headers.Error.GetHashCode()]] = string.Empty;
 
-                // Parse number of shares
-                if (!int.TryParse(parsedLines[i][columns[Headers.Shares.GetHashCode()]], out shares))
+                // Parse stock symbol
+                string symbol = parsedLines[i][columns[Headers.Symbol.GetHashCode()]].Replace(" ", "").ToUpper();
+                
+                // Ignore blank lines
+                if (symbol == string.Empty)
                 {
-                    parsedLines[i][columns[Headers.Error.GetHashCode()]] += $"Could not parse {HeaderTexts[Headers.Shares.GetHashCode()]} as an integer; ";
-                    shares = 0;
+                    continue;
                 }
-                totalShares += shares;
+
+                // If this is the total line, remove it so that we overwrite it
+                if (symbol == "TOTAL" && i == parsedLines.Length - 1)
+                {
+                    totalLineExists = 1;
+                    continue;
+                }
 
                 // Parse purchase price
-                double moneyVal;
-                if (!Double.TryParse(parsedLines[i][columns[Headers.PurchaseSharePrice.GetHashCode()]].Replace("$", "").Replace(",",""), out moneyVal))
+                double purchasePrice;
+                if (!Double.TryParse(parsedLines[i][columns[Headers.PurchaseSharePrice.GetHashCode()]].Replace("$", "").Replace(",",""), out purchasePrice))
                 {
-                    parsedLines[i][columns[Headers.Error.GetHashCode()]] += $"Could not parse {HeaderTexts[Headers.PurchaseSharePrice.GetHashCode()]} as an double; ";
-                    purchasePrice = 0;
-                }
-                else
-                {
-                    purchasePrice = moneyVal;
+                    parsedLines[i][columns[Headers.Error.GetHashCode()]] += $"Could not parse {HeaderTexts[Headers.PurchaseSharePrice.GetHashCode()]} as a double; ";
+                    continue;
                 }
 
                 // Parse purchase date
+                DateTime purchaseDate;
                 if (!DateTime.TryParse(parsedLines[i][columns[Headers.PurchaseDate.GetHashCode()]], out purchaseDate))
                 {
-                    parsedLines[i][columns[Headers.Error.GetHashCode()]] += $"Could not parse {HeaderTexts[Headers.PurchaseDate.GetHashCode()]} as an date; ";
-                    purchaseDate = DateTime.Now;
+                    parsedLines[i][columns[Headers.Error.GetHashCode()]] += $"Could not parse {HeaderTexts[Headers.PurchaseDate.GetHashCode()]} as a date; ";
+                    continue;
                 }
                 double yearsOwned = Math.Max((DateTime.Now - purchaseDate).TotalDays, 1) / 365;
 
+                // Parse number of shares
+                int shares;
+                if (!int.TryParse(parsedLines[i][columns[Headers.Shares.GetHashCode()]], out shares))
+                {
+                    parsedLines[i][columns[Headers.Error.GetHashCode()]] += $"Could not parse {HeaderTexts[Headers.Shares.GetHashCode()]} as an integer; ";
+                    continue;
+                }
+
                 // Look up price
                 double curPrice = GetPrice(symbol);
-                totalCurrentValue += curPrice * shares;
                 if (curPrice == 0)
                 {
                     parsedLines[i][columns[Headers.Error.GetHashCode()]] += $"Could not find price information; ";
+                    continue;
                 }
                 parsedLines[i][columns[Headers.CurrentSharePrice.GetHashCode()]] = string.Format("{0:C}", curPrice);
 
                 // Look up dividend to date
                 double dividends = GetDividend(symbol, purchaseDate);
-                totalDividend += dividends * shares;
                 if (dividends == 0)
                 {
                     parsedLines[i][columns[Headers.Error.GetHashCode()]] += $"Could not find dividend information; ";
@@ -377,7 +393,6 @@ namespace PortfolioHelper
 
                 // Calculate remaining information
                 double purchaseCost = Math.Max(purchasePrice * shares, 0.01);
-                totalPurchaseCost += purchaseCost;
                 parsedLines[i][columns[Headers.PurchaseValue.GetHashCode()]] = string.Format("{0:C}", purchaseCost);
                 parsedLines[i][columns[Headers.CurrentValue.GetHashCode()]] = string.Format("{0:C}", curPrice * shares);
 
@@ -394,6 +409,12 @@ namespace PortfolioHelper
                 parsedLines[i][columns[Headers.TotalGain.GetHashCode()]] = string.Format("{0:C}", totalGain);
                 parsedLines[i][columns[Headers.TotalGainPercent.GetHashCode()]] = $"{Math.Round(totalGain * 100 / purchaseCost, 3)}%";
                 parsedLines[i][columns[Headers.AnnualTotalGainPercent.GetHashCode()]] = $"{Math.Round(totalGain * 100 / purchaseCost / yearsOwned, 3)}%";
+
+                // Update totals
+                totalShares += shares;
+                totalPurchaseCost += purchaseCost;
+                totalCurrentValue += curPrice * shares;
+                totalDividend += dividends * shares;
             }
 
             // Calculate aggregate information in final line
@@ -408,25 +429,32 @@ namespace PortfolioHelper
             sumLine[columns[Headers.PurchaseValue.GetHashCode()]] = string.Format("{0:C}", totalPurchaseCost);
             sumLine[columns[Headers.CurrentValue.GetHashCode()]] = string.Format("{0:C}", totalCurrentValue);
             sumLine[columns[Headers.CapitalGain.GetHashCode()]] = string.Format("{0:C}", totalCurrentValue - totalPurchaseCost);
-            sumLine[columns[Headers.CapitalGainPercent.GetHashCode()]] = $"{Math.Round((totalCurrentValue - totalPurchaseCost) / totalPurchaseCost, 3)}%";
+            sumLine[columns[Headers.CapitalGainPercent.GetHashCode()]] = $"{Math.Round((totalCurrentValue - totalPurchaseCost) * 100 / totalPurchaseCost, 3)}%";
             sumLine[columns[Headers.TotalDividends.GetHashCode()]] = string.Format("{0:C}", totalDividend);
-            sumLine[columns[Headers.DividendPercent.GetHashCode()]] = $"{Math.Round(totalDividend / totalPurchaseCost, 3)}%";
+            sumLine[columns[Headers.DividendPercent.GetHashCode()]] = $"{Math.Round(totalDividend * 100 / totalPurchaseCost, 3)}%";
             sumLine[columns[Headers.TotalGain.GetHashCode()]] = string.Format("{0:C}", totalCurrentValue - totalPurchaseCost + totalDividend);
-            sumLine[columns[Headers.TotalGainPercent.GetHashCode()]] = $"{Math.Round((totalCurrentValue - totalPurchaseCost + totalDividend) / totalPurchaseCost, 3)}%";
+            sumLine[columns[Headers.TotalGainPercent.GetHashCode()]] = $"{Math.Round((totalCurrentValue - totalPurchaseCost + totalDividend) * 100 / totalPurchaseCost, 3)}%";
 
             // Encode parsedLines as comma seperated columns in outputFileLines
-            string[] outputFileLines = new string[inputFileLines.Length + 1];
-            for (int i = 0; i < parsedLines.Length; i++)
+            string[] outputFileLines = new string[inputFileLines.Length + 1 - totalLineExists];
+            for (int i = 0; i < outputFileLines.Length - 1; i++)
             {
                 outputFileLines[i] = "";
                 foreach (string col in parsedLines[i])
                 {
-                    outputFileLines[i] += col.Contains(",") ? $"\"{col}\"," : $"{col},";
+                    if (col != null)
+                    {
+                        outputFileLines[i] += col.Contains(",") ? $"\"{col}\"," : $"{col},";
+                    }
+                    else
+                    {
+                        outputFileLines[i] += ",";
+                    }
                 }
                 outputFileLines[i] = outputFileLines[i].Substring(0, outputFileLines[i].Length - 1); // remove trailing comma
             }
 
-            // Encode last line
+            // Encode sumLine
             int index = outputFileLines.Length - 1;
             outputFileLines[index] = "";
             foreach (string col in sumLine)
@@ -434,7 +462,6 @@ namespace PortfolioHelper
                 outputFileLines[index] += col.Contains(",") ? $"\"{col}\"," : $"{col},";
             }
             outputFileLines[index] = outputFileLines[index].Substring(0, outputFileLines[index].Length - 1); // remove trailing comma
-
 
             // Write lines to output file
             try
