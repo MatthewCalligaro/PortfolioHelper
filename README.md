@@ -20,6 +20,6 @@ If `<inputFilePath>` and `<outputFilePath>` are equal, the input file will be ov
 Example Command: `stocks.csv stocks_edited.csv`
 
 ## Additional Commands
-`quit`: Closes the application
-`?`: Prints this help text
-`template`: Creates a template input file named template.csv in the current directory
+* `quit`: Closes the application
+* `?`: Prints this help text
+* `template`: Creates a template input file named template.csv in the current directory
